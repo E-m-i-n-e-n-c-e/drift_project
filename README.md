@@ -1,47 +1,66 @@
-# Detection of Concept Drift in Industrial Data Streams (Track B)
+# Detection of Concept Drift in Industrial Data Streams
 
-Kafka -> (Spark windows) -> River online learner + drift detectors -> InfluxDB -> Grafana, plus an offline
-benchmark reproducing Sakurai et al. (2023) and a drift-triggered LightGBM study (Yang & Shami style).
+Benchmark of drift detectors (DDM, EDDM, HDDM-A, HDDM-W, ADWIN) reproducing Sakurai et al. (2023), a proposed
+**hybrid trigger (HDDM-A OR ADWIN with a refractory period)**, a drift-triggered LightGBM retraining study on
+simulated IIoT data, IoTID20 and CICIDS2017 (Yang & Shami style), and a live
+Kafka → River → InfluxDB → Grafana pipeline. Report: `report/report.pdf`. Review and status: `REVIEW.md`.
+Dashboard and presentation instructions: `TEAM_TASKS.md`.
 
 ## Layout
 | Path | Purpose |
 |---|---|
-| `drift/generator.py` | Synthetic abrupt / gradual / incremental drift streams + simulated IIoT stream with real concept drift |
-| `drift/detectors.py` | DDM, EDDM, HDDM-A, HDDM-W, ADWIN (River) + the **hybrid dual-detector trigger** |
-| `drift/metrics.py` | Tolerance-window F1, precision, recall, delay, false alarms per 1000 samples |
-| `drift/benchmark.py` | 30 seeds x 3 drift types x 9 detectors, Friedman + Nemenyi, memory, latency |
-| `drift/tune_hybrid.py` | Refractory-period sweep on separate seeds (1000-1019) |
-| `drift/make_figures.py` | Report figures (architecture, benchmark, downstream) |
+| `drift/generator.py` | Synthetic abrupt / gradual / incremental error streams (fixed or varied setting) + simulated IIoT stream |
+| `drift/datasets.py` | IoTID20 / CICIDS2017 loader and injected drift (feature remapping at known positions) |
+| `drift/detectors.py` | River detectors, the hybrid, and ablations (AND rule, EDDM pairs, refractory-only, one-sided ADWIN) |
+| `drift/metrics.py` | Tolerance-window F1, delay, penalised delay, false alarms per 1000 samples |
+| `drift/benchmark.py` | Detector benchmark + Friedman / Nemenyi + Holm-corrected Wilcoxon (F1, delay, time) |
+| `drift/tune_hybrid.py` | Refractory-period sweep on seeds 1000–1019 |
+| `drift/adaptive.py` | Static vs drift-triggered LightGBM vs River ARF / HAT, all datasets, 10 seeds |
+| `drift/make_figures.py` | Report figures |
+| `streaming/` | Producer, consumer, online pipeline, sinks, local (no-Kafka) runner, optional Spark job |
+| `docker-compose.yml`, `grafana/` | Kafka (KRaft), InfluxDB 2.7, Grafana with a provisioned dashboard |
+| `data/` | IoTID20 and CICIDS2017 samples published with Paper 2 ([MSANA repo](https://github.com/Western-OC2-Lab/MSANA-Online-Data-Stream-Analytics-And-Concept-Drift-Adaptation), MIT licence) |
+| `results/`, `results_heldout/`, `results_varied/` | Outputs (CSV, PNG); see `results/RESULTS.md` |
+| `tests/` | Unit tests (`pytest tests`) |
 | `report/` | IEEE two-column report (`report.tex`, `report.pdf`, `figs/`) |
-| `drift/adaptive.py` | Static vs drift-triggered LightGBM vs River ARF/HAT (prequential) |
-| `streaming/` | Producer, consumer, Spark window job, local (no-Kafka) runner |
-| `docker-compose.yml`, `grafana/` | Kafka (KRaft), InfluxDB 2.7, Grafana with provisioned dashboard |
+
+## Setup
+```bash
+python3 -m venv .venv-mac && source .venv-mac/bin/activate   # any name; .venv/ is an old Windows env
+pip install -r requirements.txt                              # macOS: brew install libomp (for LightGBM)
+pytest tests
+```
 
 ## Run
 ```bash
-pip install -r requirements.txt
-python -m drift.benchmark --seeds 30      # -> results/benchmark_*.csv, friedman.txt, benchmark.png
-python -m drift.benchmark --seeds 30 --start 2000 --out results_heldout   # confirmatory run
-python -m drift.adaptive                  # -> results/downstream.csv/.png
-python -m streaming.run_local             # in-process pipeline -> results/stream_local.csv
+python -m drift.benchmark --seeds 30                                    # fixed setting, seeds 0-29 -> results/
+python -m drift.benchmark --seeds 30 --start 2000 --out results_heldout # unseen seeds
+python -m drift.benchmark --seeds 100 --start 3000 --varied --out results_varied   # varied setting (300 streams)
+python -m drift.tune_hybrid                                             # refractory sweep
+python -m drift.adaptive                                                # downstream study (~10 min)
+python -m streaming.run_local                                           # in-process pipeline -> results/stream_local.csv
+python -m drift.make_figures                                            # report figures
+cd report && tectonic report.tex                                        # or pdflatex
 
-# live pipeline
+# live pipeline (Docker running)
 docker compose up -d
-python -m streaming.consumer &            # Kafka -> River -> InfluxDB
-python -m streaming.producer --rate 200   # replay stream
-# Grafana: http://localhost:3000  (dashboard "Concept Drift Monitor")
-# optional: spark-submit --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.1 streaming/spark_features.py
+python -m streaming.consumer --max 20000 &      # Kafka -> River -> InfluxDB; prints F1, throughput, latency
+python -m streaming.producer --rate 1000        # replay the simulated stream
+# Grafana: http://localhost:3000 (dashboard "Concept Drift Monitor")
 ```
 
 ## Method notes
-* Drift-detection scoring: the first alarm in `[onset, onset + width + 300)` is a true positive; every other alarm is a false alarm; undetected onsets are misses.
-* Every synthetic drift is an error-rate *increase* (one-sided detectors are the intended use case).
-* Hybrid = HDDM-A OR ADWIN with a 500-sample refractory period. The pair and R=500 were picked in exploratory runs on seeds 0-29 (so those numbers are optimistic); `tune_hybrid.py` (seeds 1000-1019) is a later sweep, and `results_heldout/` (seeds 2000-2029, `--start 2000`) is the confirmatory run. Baselines use River defaults (untuned).
-* LightGBM is not online: after an alarm the pipeline waits 250 samples, then retrains on the latest 500 labelled samples.
-* ADWIN is two-sided, so it can also fire when a learner *improves* (e.g. cold start in `run_local`).
+* Scoring: the first alarm in `[onset, onset + width + 300)` (capped at the next onset) is a true positive;
+  every other alarm is a false alarm. Penalised delay counts a miss as the whole window.
+* The hybrid's pairing and R=500 were chosen on seeds 0–29 (optimistic); `results_heldout/` and `results_varied/`
+  are confirmatory. Baselines use River defaults.
+* Injected drift on real data: rows are shuffled (removes natural drift), then at 25/50/75% of the stream the five
+  most important features swap columns with other features (abrupt, abrupt, gradual over 500 rows).
+* LightGBM retraining: after an alarm, wait 300 samples, retrain on post-alarm data only (≤500), reset the detector.
+* Live pipeline: the detector is reset and skips 300 records at the start and after each model reset.
+  `Hybrid-OR(HDDM-A,ADWIN-up)` uses a one-sided ADWIN that ignores error *decreases*.
 
-## Not done / caveats
-* **IoTID20 / CICIDS2017 are not included** (no dataset access here). Add a loader that streams the CSV
-  (sorted so attack sub-types change over time, as in Paper 3) into `drift.adaptive` / `streaming.producer`; real datasets have no drift labels, so injected drift is required for F1/delay.
-* Kafka, InfluxDB, Grafana and Spark files were written but **not executed** in the build environment.
-* Downstream results are a single simulated stream (seed 0).
+## Caveats
+* Dataset files are the published samples (1% IoTID20, 0.5% CICIDS2017), not the full datasets.
+* The Spark job (`streaming/spark_features.py`) was not run; it is not on the scoring path.
+* The live run is one consumer on one machine (~820 records/s); timings vary by machine.

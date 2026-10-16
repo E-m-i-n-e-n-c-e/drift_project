@@ -3,6 +3,25 @@
 Review of the current repository against the project proposal (`Concept_Drift_Detection_Proposal.pdf`).
 Reviewed: 2026-10-16.
 
+## 0. Status (updated 2026-10-16, after the fixes)
+
+Sections 1–5 below are the original review. Every item has since been addressed:
+
+| Item | Status |
+|---|---|
+| IoTID20 / CICIDS2017 (remaining #1) | **Done.** Published samples from Paper 2's repo in `data/`; `drift/datasets.py`; natural order + shuffled with injected drift |
+| Multi-seed downstream study (remaining #2) | **Done.** 10 seeds, mean ± std, five streams (`results/downstream*.csv`) |
+| Wider synthetic benchmark; tests on delay and time (remaining #3, change 4) | **Done.** Varied setting, 300 streams (`results_varied/`); Friedman/Nemenyi + Holm-corrected Wilcoxon on F1, penalised delay, time |
+| Kafka / Grafana pipeline (remaining #4) | **Done.** Run end to end: ~820 records/s, 2–3 ms median latency; exported to `results/stream_kafka.csv`. Spark job still not run (marked optional) |
+| Hybrid change stated; Paper 2's ADWIN+EDDM pair (change 1) | **Done.** Report section "Change from the proposal"; `Hybrid-OR(ADWIN,EDDM)` and `HDDM-A+R500` added |
+| Downstream finding discussed (change 2) | **Done.** Report states the hybrid is not the best retraining trigger |
+| Report numbers match result files (change 3) | **Done.** All tables regenerated from one set of runs |
+| Correctness fixes (change 5) | **Done.** Per-onset widths in scoring; retraining on post-alarm data only (wait 300) with detector reset; dead code removed |
+| Repo hygiene (change 6) | **Done.** `.gitignore`, pinned `requirements.txt`, 14 unit tests in `tests/`, `__pycache__`/`.DS_Store` untracked. The Windows `.venv/` is ignored but not deleted |
+| New, not in the original review | Live pipeline: detector warm-up after resets, and a one-sided ADWIN variant that removes "improvement" alarms (F1 0.50 → 0.86 live) |
+
+Headline results changed in places: see `report/report.pdf` and `TEAM_TASKS.md` §1.
+
 ## 1. Overall verdict
 
 Nearly the whole project has been built end to end, and the core of it is sound. The detector benchmark was

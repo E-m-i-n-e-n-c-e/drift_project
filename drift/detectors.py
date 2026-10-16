@@ -13,6 +13,31 @@ class Wrap:
         return bool(self.det.drift_detected)
 
 
+class OneSided:
+    """ADWIN that only reports increases of the error rate. ADWIN is two-sided; on a detection it drops the older part
+    of its window, so the window mean rising across the update means the error went up."""
+    def __init__(self, det):
+        self.det = det
+
+    def update(self, x):
+        before = self.det.estimation
+        self.det.update(x)
+        return bool(self.det.drift_detected) and self.det.estimation > before
+
+
+class Refractory:
+    """Single detector with the hybrid's refractory period (ablation: is the gain only from merging alarm bursts?)."""
+    def __init__(self, det, refractory=500):
+        self.det, self.ref, self.t, self.last = det, refractory, 0, -10**9
+
+    def update(self, x):
+        self.t += 1
+        if self.det.update(x) and self.t - self.last > self.ref:
+            self.last = self.t
+            return True
+        return False
+
+
 class Hybrid:
     """Fast + slow detector fused by a rule.
     mode='or'  : alarm if either fires.
@@ -51,4 +76,7 @@ REGISTRY = {
     "Hybrid-OR(HDDM-W,EDDM)":  lambda: Hybrid(Wrap(binary.HDDMW()), Wrap(binary.EDDM()), "or"),
     "Hybrid-AND(HDDM-W,EDDM)": lambda: Hybrid(Wrap(binary.HDDMW()), Wrap(binary.EDDM()), "and"),
     "Hybrid-AND(HDDM-W,ADWIN)": lambda: Hybrid(Wrap(binary.HDDMW()), Wrap(drift.ADWIN()), "and"),
+    "Hybrid-OR(ADWIN,EDDM)":   lambda: Hybrid(Wrap(drift.ADWIN()), Wrap(binary.EDDM()), "or", refractory=500),  # Paper 2's pair
+    "Hybrid-OR(HDDM-A,ADWIN-up)": lambda: Hybrid(Wrap(binary.HDDMA()), OneSided(drift.ADWIN()), "or", refractory=500),
+    "HDDM-A+R500":             lambda: Refractory(Wrap(binary.HDDMA()), 500),   # refractory period without fusion
 }

@@ -39,6 +39,24 @@ def make_stream(kind="abrupt", n=10000, n_drifts=3, width=None,
     return DriftStream((rng.random(n) < p).astype(int), onsets.tolist(), int(width), kind)
 
 
+def sample_config(kind, seed):
+    """Random stream setting (Paper 1 varies size, number of drifts and drift duration/amplitude).
+    Drifts are spaced at least 2 x width apart so consecutive drifts do not overlap."""
+    rng = np.random.default_rng(10**6 + seed)
+    n = int(rng.choice([5000, 10000, 20000]))
+    width = 1 if kind == "abrupt" else int(rng.choice([250, 500, 1000]))
+    n_drifts = int(rng.integers(1, 5))
+    while n_drifts > 1 and n / (n_drifts + 1) < 2 * max(width, 500):
+        n_drifts -= 1
+    return dict(n=n, n_drifts=n_drifts, width=width,
+                p_low=float(rng.choice([0.05, 0.10])), amp=float(rng.choice([0.05, 0.10, 0.15])))
+
+
+def make_varied_stream(kind, seed):
+    cfg = sample_config(kind, seed)
+    return make_stream(kind, seed=seed, **cfg), cfg
+
+
 SENSORS = ["temperature", "vibration", "pressure", "current", "rpm", "flow", "torque", "voltage"]
 
 

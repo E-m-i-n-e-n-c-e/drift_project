@@ -1,12 +1,83 @@
-Friedman chi2=426.07, p=4.94e-87, k=9, N=90
-Nemenyi CD(0.05)=1.266
+== F1: Friedman chi2=612.10, p=3.62e-124, k=12, N=90, Nemenyi CD(0.05)=1.756
 detector
-Hybrid-OR(HDDM-A,ADWIN)     2.14
-HDDM-A                      2.73
-ADWIN                       3.27
-DDM                         4.79
-HDDM-W                      4.83
-Hybrid-AND(HDDM-W,EDDM)     5.42
-Hybrid-AND(HDDM-W,ADWIN)    6.24
-Hybrid-OR(HDDM-W,EDDM)      7.20
-EDDM                        8.38
+Hybrid-OR(HDDM-A,ADWIN)        3.16
+Hybrid-OR(HDDM-A,ADWIN-up)     3.16
+HDDM-A+R500                    3.67
+HDDM-A                         3.94
+ADWIN                          4.74
+DDM                            6.76
+HDDM-W                         6.87
+Hybrid-AND(HDDM-W,EDDM)        7.66
+Hybrid-OR(ADWIN,EDDM)          8.28
+Hybrid-AND(HDDM-W,ADWIN)       8.53
+Hybrid-OR(HDDM-W,EDDM)        10.01
+EDDM                          11.24
+-- Hybrid-OR(HDDM-A,ADWIN) vs others (Wilcoxon signed-rank, Holm-corrected)
+                     other  mean_diff  rank_gap  p_holm
+                     ADWIN     0.1450    1.5833  0.0000
+                       DDM     0.3055    3.6056  0.0000
+                      EDDM     0.6391    8.0833  0.0000
+                    HDDM-A     0.0628    0.7833  0.0207
+               HDDM-A+R500     0.0519    0.5111  0.2188
+                    HDDM-W     0.3299    3.7167  0.0000
+  Hybrid-AND(HDDM-W,ADWIN)     0.4535    5.3722  0.0000
+   Hybrid-AND(HDDM-W,EDDM)     0.3688    4.5000  0.0000
+     Hybrid-OR(ADWIN,EDDM)     0.4256    5.1278  0.0000
+Hybrid-OR(HDDM-A,ADWIN-up)     0.0000    0.0000  1.0000
+    Hybrid-OR(HDDM-W,EDDM)     0.5505    6.8500  0.0000
+
+== penalised delay: Friedman chi2=698.70, p=1.02e-142, k=12, N=90, Nemenyi CD(0.05)=1.756
+detector
+Hybrid-OR(HDDM-W,EDDM)         1.67
+EDDM                           2.12
+Hybrid-OR(ADWIN,EDDM)          3.83
+HDDM-W                         5.01
+Hybrid-OR(HDDM-A,ADWIN)        6.09
+Hybrid-OR(HDDM-A,ADWIN-up)     6.09
+Hybrid-AND(HDDM-W,EDDM)        6.86
+HDDM-A                         8.16
+HDDM-A+R500                    8.16
+DDM                            8.71
+ADWIN                          9.72
+Hybrid-AND(HDDM-W,ADWIN)      11.58
+-- Hybrid-OR(HDDM-A,ADWIN) vs others (Wilcoxon signed-rank, Holm-corrected)
+                     other  mean_diff  rank_gap  p_holm
+                     ADWIN   -56.5667    3.6333     0.0
+                       DDM   -46.0704    2.6222     0.0
+                      EDDM   215.8556   -3.9722     0.0
+                    HDDM-A   -21.4963    2.0722     0.0
+               HDDM-A+R500   -21.4963    2.0722     0.0
+                    HDDM-W    53.8370   -1.0833     0.0
+  Hybrid-AND(HDDM-W,ADWIN)  -118.8259    5.4944     0.0
+   Hybrid-AND(HDDM-W,EDDM)    -2.1111    0.7722     1.0
+     Hybrid-OR(ADWIN,EDDM)   129.8370   -2.2556     0.0
+Hybrid-OR(HDDM-A,ADWIN-up)     0.0000    0.0000     1.0
+    Hybrid-OR(HDDM-W,EDDM)   254.2630   -4.4222     0.0
+
+== time: Friedman chi2=962.31, p=2.47e-199, k=12, N=90, Nemenyi CD(0.05)=1.756
+detector
+ADWIN                          1.00
+EDDM                           2.00
+DDM                            3.02
+Hybrid-OR(ADWIN,EDDM)          3.98
+HDDM-W                         5.10
+Hybrid-AND(HDDM-W,ADWIN)       6.20
+Hybrid-OR(HDDM-W,EDDM)         7.49
+Hybrid-AND(HDDM-W,EDDM)        7.56
+HDDM-A                         9.01
+HDDM-A+R500                    9.86
+Hybrid-OR(HDDM-A,ADWIN)       10.93
+Hybrid-OR(HDDM-A,ADWIN-up)    11.86
+-- Hybrid-OR(HDDM-A,ADWIN) vs others (Wilcoxon signed-rank, Holm-corrected)
+                     other  mean_diff  rank_gap  p_holm
+                     ADWIN     2.9045   -9.9333     0.0
+                       DDM     2.6939   -7.9111     0.0
+                      EDDM     2.8164   -8.9333     0.0
+                    HDDM-A     0.3476   -1.9222     0.0
+               HDDM-A+R500     0.2942   -1.0778     0.0
+                    HDDM-W     1.0150   -5.8333     0.0
+  Hybrid-AND(HDDM-W,ADWIN)     0.7099   -4.7333     0.0
+   Hybrid-AND(HDDM-W,EDDM)     0.5988   -3.3778     0.0
+     Hybrid-OR(ADWIN,EDDM)     2.5215   -6.9556     0.0
+Hybrid-OR(HDDM-A,ADWIN-up)    -0.1219    0.9222     0.0
+    Hybrid-OR(HDDM-W,EDDM)     0.6016   -3.4444     0.0

@@ -1,0 +1,9 @@
+strategy,accuracy,f1,alarms,retrains,ms_per_sample,accuracy_std,f1_std
+Static LightGBM,0.8407,0.016,0.0,0.0,0.0097,,
+LightGBM + DDM,0.9682,0.8945,40.0,15.0,0.0266,,
+LightGBM + HDDM-A,0.9184,0.7328,6.0,4.0,0.0199,,
+LightGBM + ADWIN,0.9235,0.7383,8.0,6.0,0.0163,,
+LightGBM + EDDM,0.938,0.7864,11.0,6.0,0.0158,,
+"LightGBM + Hybrid-OR(HDDM-A,ADWIN)",0.926,0.7561,6.0,5.0,0.0218,,
+River ARF (online),0.9882,0.9623,0.0,0.0,0.2505,,
+River HAT (online),0.9618,0.8785,0.0,0.0,0.2479,,

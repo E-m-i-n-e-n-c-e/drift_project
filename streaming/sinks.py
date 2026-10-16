@@ -15,7 +15,7 @@ class CsvSink:
 
 
 class InfluxSink:
-    """Writes measurement `drift_stream` (fields: err, rolling_err, alarm, true_drift) to InfluxDB 2.x."""
+    """Writes measurement `drift_stream` (fields: err, rolling_err, alarm, true_drift, latency_ms) to InfluxDB 2.x."""
     def __init__(self, url="http://localhost:8086", token="drift-token", org="drift-org", bucket="drift", run="run1"):
         from influxdb_client import InfluxDBClient
         from influxdb_client.client.write_api import SYNCHRONOUS
@@ -27,6 +27,8 @@ class InfluxSink:
         p = (Point("drift_stream").tag("run", self.run).field("err", row["err"])
              .field("rolling_err", float(row["rolling_err"])).field("alarm", row["alarm"])
              .field("true_drift", row["true_drift"]))
+        if "latency_ms" in row:
+            p = p.field("latency_ms", float(row["latency_ms"]))
         self.w.write(bucket=self.bucket, org=self.org, record=p)
 
     def close(self): self.c.close()

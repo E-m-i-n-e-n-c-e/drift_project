@@ -2,15 +2,13 @@
 \usepackage{cite,amsmath,graphicx,booktabs,url,array}
 \usepackage[T1]{fontenc}
 \begin{document}
-\title{Hybrid Drift Triggering for Industrial Data Streams: A Kafka--River--InfluxDB--Grafana Pipeline}
-\author{\IEEEauthorblockN{Team Member 1, Team Member 2, Team Member 3, Team Member 4}
-\IEEEauthorblockA{IOE413 Streaming Data Analytics, Topic 12\\
-Department, Institution, City, India\\
-\{email1, email2, email3, email4\}@institution.edu}}
+\title{Detection of Concept Drift in Industrial Data Streams: A Hybrid Drift Trigger Evaluated on Synthetic, IIoT and Live Kafka Streams}
+\author{\IEEEauthorblockN{G Jeevan Jadhav (2023BCS0098), K Akhil (2023BCD0018),\\ P Joshua Naik (2023BCS0089), N Mohammed Suhail Ahmed Khan (2023BCS0222)}
+\IEEEauthorblockA{IOE413 Streaming Data Analytics, Topic 12}}
 \maketitle
 
 \begin{abstract}
-Machine-learning models deployed on industrial sensor streams silently lose accuracy when the data-generating process changes, a phenomenon known as concept drift. We build an end-to-end streaming pipeline (Apache Kafka, Spark Structured Streaming, the River online-learning library, InfluxDB and Grafana) that monitors a live classifier and raises drift alarms. As the baseline we reproduce the detector benchmark of Sakurai et al.\ (DDM, EDDM, HDDM-A, HDDM-W) and add ADWIN. Our enhancement is a hybrid trigger that fuses a fast error-rate test (HDDM-A) with a window-mean test (ADWIN) using an OR rule and a refractory period. On 90 synthetic streams (abrupt, gradual, incremental drift) the hybrid attains the highest mean F1 (0.733 versus 0.672 for the best single detector; 0.786 versus 0.723 on 30 further unseen streams) at similar delay and false-alarm rate, but the improvement is not statistically significant under a Friedman/Nemenyi test. Confirmation-style (AND) fusion and EDDM-based hybrids performed worse than single detectors; we report these negative results. In a prequential study on a simulated IIoT stream, drift-triggered LightGBM retraining restores accuracy from 0.59 (static model) to 0.81--0.86. Results use synthetic and simulated data only; validation on IoTID20 and a measured end-to-end Kafka run remain future work.
+Machine-learning models deployed on industrial streams silently lose accuracy when the data-generating process changes (concept drift). We compare the error-rate detectors DDM, EDDM, HDDM-A and HDDM-W, reproducing the benchmark protocol of Sakurai et al., together with ADWIN, and propose a hybrid trigger that fuses HDDM-A and ADWIN with an OR rule and a refractory period. On 480 synthetic streams in three settings the hybrid has the highest mean detection F1 (0.733, 0.786 and 0.591 against 0.672, 0.723 and 0.550 for the best single detector). It is significantly better than HDDM-A in all settings (Holm-corrected Wilcoxon) but statistically tied with ADWIN when stream settings vary. Fusions with EDDM, including the pairing in our proposal and the ADWIN/EDDM pair of Yang and Shami, and confirmation (AND) fusion all performed worse than single detectors. In a prequential study on a simulated IIoT stream and on IoTID20 and CICIDS2017, drift-triggered LightGBM retraining recovers most of the accuracy a static model loses (attack-detection F1 0.02 to 0.74--0.89 on CICIDS2017 in natural order). The hybrid is not the best retraining trigger, and River's online learners are competitive. Finally, we run the Kafka--River--InfluxDB--Grafana pipeline end to end: one consumer sustains about 820 records/s at a median latency of 2--3\,ms, and a one-sided ADWIN in the hybrid removes alarms caused by a learner \emph{improving}.
 \end{abstract}
 
 \begin{IEEEkeywords}
@@ -18,109 +16,112 @@ concept drift, streaming analytics, industrial IoT, ADWIN, HDDM, River, Kafka
 \end{IEEEkeywords}
 
 \section{Introduction}
-Industrial systems such as production lines, condition-monitoring networks and industrial intrusion-detection systems produce high-velocity streams whose statistics change with equipment wear, firmware updates, process reconfiguration and new attack behaviour. A classifier trained offline on historical data degrades under such \emph{concept drift}~\cite{gama2014survey}, which in predictive maintenance and security has safety and reliability consequences. A batch-only workflow finds the problem late, since accuracy is measured only after labels are aggregated and the model retrained offline. Detection must therefore run online, in bounded memory, and per sample.
+Industrial systems such as production lines, condition-monitoring networks and industrial intrusion-detection systems produce high-velocity streams whose statistics change with equipment wear, firmware updates, process reconfiguration and new attack behaviour. A classifier trained offline on historical data degrades under such \emph{concept drift}~\cite{gama2014survey}, which in predictive maintenance and security has safety and reliability consequences. Detection must therefore run online, in bounded memory, and per sample.
 
-\textbf{Problem statement.} Which drift-detection strategy offers the best trade-off between detection accuracy (F1), detection delay, false alarms and computational overhead on industrial streams, and can a simple hybrid of two detectors improve on the best single detector?
+\textbf{Research question.} Which drift-detection strategy offers the best trade-off between detection accuracy (F1), detection delay and computational overhead on industrial (IIoT) data streams, and can this trade-off be improved by a hybrid detector?
 
-\textbf{Contributions.} (i) A working streaming pipeline in which a Kafka topic feeds an online learner with a drift detector whose outputs are written to InfluxDB and shown in Grafana. (ii) A reproduction of the detector-benchmark protocol of Sakurai et al.~\cite{sakurai2023} with a tolerance-window scoring rule and statistical testing. (iii) A hybrid HDDM-A/ADWIN trigger, with ablations against AND-fusion and EDDM-based pairings. (iv) A downstream study of drift-triggered retraining of a gradient-boosted model.
+\textbf{Contributions.} (i) A reproduction of the detector benchmark protocol of Sakurai et al.~\cite{sakurai2023} in a fixed and a varied stream setting, with Friedman/Nemenyi and pairwise Wilcoxon tests on F1, delay and time. (ii) A hybrid HDDM-A/ADWIN trigger, with ablations that isolate the fusion from the refractory period and that test the EDDM-based pairings of our proposal and of~\cite{yang2023msana}. (iii) A downstream study of drift-triggered LightGBM retraining on a simulated IIoT stream and on IoTID20 and CICIDS2017, both in natural order and with injected drift. (iv) A measured end-to-end run of a Kafka--River--InfluxDB--Grafana monitoring pipeline.
 
 \section{Related Work}
-\textbf{Base paper 1 (reproduced baseline).} Sakurai et al.~\cite{sakurai2023} benchmark the error-rate detectors DDM~\cite{gama2004}, EDDM~\cite{baena2006}, HDDM-A and HDDM-W~\cite{frias2015} on synthetic binary streams with controlled drift type, length and amplitude, using F1, detection time and detection delay with Friedman/Nemenyi testing. They conclude that no single detector dominates on all axes and that detector choice should depend on the drift scenario. We reproduce this protocol with River~\cite{montiel2021}.
+\textbf{Base paper 1 (reproduced baseline).} Sakurai et al.~\cite{sakurai2023} benchmark DDM~\cite{gama2004}, EDDM~\cite{baena2006}, HDDM-A and HDDM-W~\cite{frias2015} on synthetic binary streams with controlled drift type, length and amplitude, using F1, detection time and delay with Friedman/Nemenyi tests. HDDM-W gave the best overall trade-off and EDDM was the most accurate; no detector dominated on every axis.
 
-\textbf{Base paper 2.} Yang and Shami~\cite{yang2023msana} propose a multi-stage online analytics framework for IIoT network data (MSANA) that pairs ADWIN~\cite{bifet2007} and EDDM as drift detectors and, on detection, re-selects features and retrains an online ensemble. It is evaluated on IoTID20 and CICIDS2017.
+\textbf{Base paper 2.} Yang and Shami~\cite{yang2023msana} propose MSANA, an online analytics framework for IIoT network data that pairs ADWIN~\cite{bifet2007} and EDDM as drift detectors and, on detection, re-selects features and retrains an online ensemble. It is evaluated on IoTID20 and CICIDS2017; we use the samples of both datasets the authors publish.
 
-\textbf{Base paper 3.} Yang and Shami~\cite{yang2021lightweight} present a lightweight framework that combines LightGBM~\cite{ke2017} with an optimized adaptive sliding-window drift detector for resource-constrained IoT devices and shows that drift-triggered retraining is more accurate and cheaper than static or naively retrained models. We follow this ``detect, then retrain a lightweight model'' design for our downstream study.
+\textbf{Base paper 3.} Yang and Shami~\cite{yang2021lightweight} combine LightGBM~\cite{ke2017} with an optimized adaptive sliding-window detector for resource-constrained IoT devices and show that drift-triggered retraining is more accurate and cheaper than static models. We follow this ``detect, then retrain a lightweight model'' design downstream.
 
-\textbf{Gap.} Sakurai et al.\ evaluate detectors in isolation on synthetic streams; Yang and Shami use detector pairs inside larger pipelines, but the effect of the \emph{fusion rule} between two detectors is not isolated. We study that rule directly, on controlled ground truth and inside a running stream pipeline.
+\textbf{Gap.} Paper 1 evaluates detectors in isolation; Paper 2 uses a detector pair inside a larger pipeline, but the effect of the \emph{fusion rule} is not isolated. We study that rule directly, on controlled ground truth, on real IIoT data and in a running stream pipeline.
 
 \section{System Architecture}
-Fig.~\ref{fig:arch} shows the pipeline. A producer replays a simulated IIoT sensor stream (eight sensor channels with a normal/fault label and a known drift schedule) into the Kafka topic \texttt{sensors} at a configurable rate. The online scorer, a Python consumer, reads each record, predicts with a River Hoeffding Adaptive Tree, compares the prediction with the label (prequential test-then-train), updates the drift detector with the resulting error bit, and replaces the learner on an alarm. Per-record error, rolling error, alarm and ground-truth drift flags are written to InfluxDB as measurement \texttt{drift\_stream}, and a provisioned Grafana dashboard plots rolling error, alarms and true drift onsets with a five-second refresh. In parallel, a Spark Structured Streaming job reads the same topic and computes 10\,s windows (sliding 5\,s) of per-sensor mean, standard deviation and class rate. In the current implementation this branch writes to the console and does not feed the detector; it demonstrates the windowed feature layer but is not part of the scoring path.
+Fig.~\ref{fig:arch} shows the pipeline. A producer replays a simulated IIoT sensor stream (eight sensor channels, a normal/fault label and a known drift schedule) into the Kafka topic \texttt{sensors}. The online scorer, a Python consumer, reads each record, predicts with a River Hoeffding Adaptive Tree, compares the prediction with the label (prequential test-then-train), updates the drift detector with the error bit, and replaces the learner on an alarm. At the start and after each reset the detector is also reset and skips a 300-record warm-up. Per-record error, rolling error, alarm, ground-truth drift flag and end-to-end latency are written to InfluxDB, and a provisioned Grafana dashboard plots them with a five-second refresh. A Spark Structured Streaming job that computes 10\,s windowed features from the same topic is included as an optional parallel consumer; it is not on the scoring path and was not run.
 
-
-\textbf{Why these tools.} Kafka provides a durable, replayable, ordered log that decouples the sensor source from the consumers, so the same recorded stream can drive the scorer and the Spark job independently and experiments can be repeated. River updates a model and a drift detector one sample at a time in constant memory, which is the property a batch library lacks. Spark Structured Streaming supplies event-time windows with watermarks for feature aggregation that would otherwise be hand-written. InfluxDB stores the resulting time series and Grafana renders them live, giving the monitoring view an operator needs. A single script reading a CSV once would compute the same detector scores but would not exercise transport, windowing, storage or visualization, nor show behaviour on a live feed.
+\textbf{Why these tools.} Kafka provides a durable, replayable, ordered log that decouples the source from consumers, so experiments can be repeated. River updates a model and a detector one sample at a time in constant memory. InfluxDB stores the resulting time series and Grafana renders them live, giving the monitoring view an operator needs.
 
 \begin{figure*}[t]
 \centering\includegraphics[width=0.92\textwidth]{figs/arch.pdf}
-\caption{Pipeline architecture and data flow. The Spark branch is a parallel consumer of the Kafka topic.}
+\caption{Pipeline architecture and data flow. The Spark branch is an optional parallel consumer and was not run.}
 \label{fig:arch}
 \end{figure*}
 
 \section{Proposed Enhancement}
-Error-rate detectors differ in what they are sensitive to: DDM/HDDM-A test a running mean of the error bit against its historical minimum, HDDM-W applies exponentially weighted moving averages, EDDM monitors the distance between consecutive errors, and ADWIN adaptively shrinks a window whenever two sub-windows have significantly different means~\cite{bifet2007}. We combine two detectors with different mechanisms:
+Error-rate detectors differ in what they are sensitive to: DDM and HDDM-A test a running mean of the error bit against its historical minimum, HDDM-W uses exponentially weighted averages, EDDM monitors the distance between consecutive errors, and ADWIN shrinks a window whenever two sub-windows have significantly different means~\cite{bifet2007}. We combine two detectors with different mechanisms:
 \begin{equation}
 \text{alarm}_t=\big(f_t\lor s_t\big)\land(t-t_{\text{last}}>R),
 \end{equation}
-where $f_t$ is HDDM-A, $s_t$ is ADWIN, $t_{\text{last}}$ is the previous emitted alarm and $R$ is a refractory period. The OR rule raises recall, since the two tests fire on different samples, and the refractory period merges the bursts of alarms that follow a single drift, protecting precision. The pairing and $R=500$ were chosen during exploratory runs on the evaluation seeds 0--29, so results on those seeds are optimistically biased. A later sweep over $R\in\{100,200,300,500,800\}$ on separate seeds 1000--1019 (Table~\ref{tab:sweep}) and a confirmatory benchmark on untouched seeds 2000--2029 (Table~\ref{tab:conf}) were run to check this. We also implement a confirmation rule ($f$ and $s$ within $k=300$ samples of each other) and the pairing HDDM-W/EDDM as ablations. Both detectors are used with River's default parameters.
+where $f_t$ is HDDM-A, $s_t$ is ADWIN, $t_{\text{last}}$ is the previous emitted alarm and $R=500$ a refractory period. The OR rule raises recall because the two tests fire on different samples; the refractory period merges the burst of alarms that follows one drift.
+
+\textbf{Change from the proposal.} The proposal planned to pair a fast detector (DDM or HDDM-W) with EDDM. That pairing, Paper 2's ADWIN/EDDM pair and an AND (confirmation) rule are all evaluated below as ablations; all of them performed worse than single detectors, which is why the final hybrid pairs HDDM-A with ADWIN. Two further variants isolate design choices: HDDM-A with the same refractory period but no fusion (HDDM-A+R500), and a hybrid whose ADWIN only reports \emph{increases} of the error rate (one-sided; ADWIN-up). ADWIN is two-sided, and in a deployment where a learner is reset, the falling error of the fresh learner is improvement, not drift.
+
+\textbf{Selection bias.} The pairing and $R=500$ were chosen in exploratory runs on seeds 0--29, so results on those seeds are optimistic. A refractory sweep on separate seeds 1000--1019 (Table~\ref{tab:sweep}), a confirmatory run on untouched seeds 2000--2029 and the varied setting on seeds 3000--3099 check this. All detectors use River defaults.
 
 \section{Implementation}
-The code is Python~3.12 with River~0.26.1, LightGBM~4.7.0, NumPy~2.4.4, SciPy~1.17.1, scikit-learn~1.8.0 and pandas~3.0.2. The streaming infrastructure is configured in \texttt{docker-compose.yml} with Apache Kafka~3.7.0 in KRaft mode, InfluxDB~2.7 and Grafana~10.4.2; the Spark job targets Spark~3.5 with the Kafka connector. Kafka clients use \texttt{kafka-python} and the InfluxDB writer uses \texttt{influxdb-client}.
+Python~3.14 with River~0.26.1, LightGBM~4.7.0, NumPy~2.5, SciPy~1.18, scikit-learn~1.9 and pandas~3.0. The infrastructure (\texttt{docker-compose.yml}) is Apache Kafka~3.7.0 in KRaft mode, InfluxDB~2.7 and Grafana~10.4.2, with \texttt{kafka-python} and \texttt{influxdb-client}.
 
-\textbf{Synthetic drift streams.} Following the protocol of~\cite{sakurai2023}, each stream is a binary error indicator of length 10\,000 with three drifts at positions 2\,500, 5\,000 and 7\,500. At each drift the error probability rises by 0.12 from a base of 0.10. Abrupt drift switches instantly; incremental drift ramps the probability linearly over 500 samples; gradual drift draws each sample from the new concept with a linearly increasing probability over 500 samples. We generate 30 seeds per drift type (90 streams).
+\textbf{Synthetic drift streams.} Each stream is a binary error indicator whose error probability rises by an amplitude at each drift. Abrupt drift switches instantly; incremental drift ramps the probability linearly over the drift width; gradual drift draws each sample from the new concept with a linearly increasing probability. In the \emph{fixed} setting streams have 10\,000 samples, three drifts (2\,500/5\,000/7\,500), base error 0.10, amplitude 0.12 and width 500. In the \emph{varied} setting, which follows Paper 1 in varying stream size, number of drifts and drift duration and amplitude, each stream draws its length from \{5k, 10k, 20k\}, 1--4 drifts (at least twice the width apart), width from \{250, 500, 1000\}, base error from \{0.05, 0.10\} and amplitude from \{0.05, 0.10, 0.15\}. Each setting has the same number of streams per drift type.
 
+\textbf{Simulated IIoT stream.} 20\,000 samples with eight features and a label from a linear boundary plus an interaction term and noise. The boundary changes abruptly at 5\,000 and 10\,000 and gradually over 1\,500 samples from 15\,000.
+
+\textbf{IoTID20 and CICIDS2017.} We use the samples published with Paper 2 (6\,252 IoTID20 flows, 94\% attacks; 14\,155 CICIDS2017 flows, 19\% attacks) with binary labels, dropping flow and IP identifiers and the timestamp. In \emph{natural order} the streams drift (strongly in CICIDS2017), but drift positions are unknown. To score detection we also build \emph{injected-drift} streams: the rows are shuffled with a seed, which removes the natural drift, and at three onsets spread over the post-training part the five most important features (by a LightGBM fit on the training part) swap columns with random other features, a new remapping per drift. This mimics a sensor or firmware remapping: the data stay real while $P(y\mid x)$ as seen by the model changes. Drifts 1 and 2 are abrupt and drift 3 is gradual over 500 rows. The static model's error rises from under 1\% to 5--15\% at the onsets.
+
+\textbf{Downstream learners.} The first 1\,000 samples train LightGBM. Evaluation is prequential in micro-batches of 25. For drift-triggered variants the detector receives each error bit; after an alarm the pipeline waits 300 samples and retrains on the post-alarm samples only (at most 500), so the new model does not learn the old concept; the detector is then reset. River's Adaptive Random Forest (5 trees) and Hoeffding Adaptive Tree are online baselines. Every stream with drift labels is run with 10 seeds.
 
 \begin{table}[t]
 \caption{Key configuration choices.}
 \label{tab:cfg}
 \centering\footnotesize\setlength{\tabcolsep}{3pt}
-\begin{tabular}{@{}p{0.34\columnwidth}p{0.6\columnwidth}@{}}
+\begin{tabular}{@{}p{0.32\columnwidth}p{0.62\columnwidth}@{}}
 \toprule
 Item & Setting\\
 \midrule
-Synthetic streams & 10\,000 samples, 3 drifts (2\,500/5\,000/7\,500), error rate 0.10 rising by 0.12 per drift, width 1 (abrupt) or 500\\
+Synthetic, fixed & 10\,000 samples, 3 drifts, error 0.10 $+$0.12 per drift, width 1 or 500; seeds 0--29 and 2000--2029\\
+Synthetic, varied & random length, drifts, width, base, amplitude; seeds 3000--3099 (300 streams)\\
 Tolerance window & $[t,\,t+w+300)$, capped at next onset\\
-Detectors & River defaults for DDM, EDDM, HDDMA, HDDMW, ADWIN\\
 Hybrid & HDDM-A OR ADWIN, refractory $R=500$\\
-Simulated IIoT stream & 20\,000 samples, 8 features, drifts at 5\,000, 10\,000, 15\,000 (gradual, 1\,500)\\
 LightGBM & 80 trees, learning rate 0.1, 15 leaves, single thread\\
-Retraining & wait 250 samples after alarm, train on latest 500\\
-Prequential batch & 25 samples; initial training on first 1\,000\\
-River baselines & ARF with 5 trees; Hoeffding Adaptive Tree; seed 1\\
-Kafka replay & 200 records/s, topic \texttt{sensors}\\
-Spark windows & 10\,s length, 5\,s slide, 10\,s watermark\\
+Retraining & wait 300 after alarm; train on post-alarm data ($\le$500); reset detector\\
+Injected drift & shuffle rows; swap top-5 features at 25/50/75\% of stream\\
+Live pipeline & Hoeffding Adaptive Tree; warm-up 300 records; replay 1\,000 records/s\\
 \bottomrule
 \end{tabular}
 \end{table}
 
-\textbf{Simulated IIoT stream.} For the downstream study we generate 20\,000 samples with eight features and a binary label from a linear boundary plus an interaction term and noise. The boundary changes abruptly at samples 5\,000 and 10\,000 and gradually over 1\,500 samples from 15\,000, so drift is real concept drift.
-
-\textbf{Downstream learners.} The first 1\,000 samples train the initial LightGBM model. Evaluation is prequential in micro-batches of 25. For drift-triggered variants the detector receives each error bit; after an alarm the pipeline waits 250 samples and retrains on the latest 500 labelled samples. LightGBM is not an online learner, so this delayed retraining is an explicit design choice. River's Adaptive Random Forest (five trees) and Hoeffding Adaptive Tree serve as true online baselines.
-
 \section{Experimental Setup and Results}
-\textbf{Scoring rule.} A true drift onset $t$ is detected if the first alarm falls in $[t,\,t+w+300)$ and before the next onset, where $w$ is the drift width. Every other alarm is a false alarm and an unmatched onset is a miss. We report F1, mean detection delay over detected drifts, false alarms per 1\,000 samples, per-sample detector time and peak allocated memory (\texttt{tracemalloc}, one stream). Detectors are compared with the Friedman test on per-stream F1 ($N=90$ blocks, $k=9$ detectors) and the Nemenyi critical difference~\cite{demsar2006}.
+\textbf{Scoring.} A drift onset $t$ is detected if the first alarm falls in $[t,\,t+w+300)$ and before the next onset, where $w$ is the drift width. Every other alarm is a false alarm and an unmatched onset is a miss. We report F1, mean delay over detected drifts, \emph{penalised} delay (a miss counts as the whole window), false alarms per 1\,000 samples, per-sample time and peak allocated memory. Detectors are compared with the Friedman test over streams, the Nemenyi critical difference (CD)~\cite{demsar2006}, and Holm-corrected Wilcoxon signed-rank tests of the hybrid against each other detector, which are more powerful than Nemenyi for comparisons with one method.
 
-\textbf{Detector benchmark.} Table~\ref{tab:overall} and Fig.~\ref{fig:bench} give the results. The Friedman test rejects equal performance ($\chi^2=410.1$, $p<10^{-80}$); the Nemenyi critical difference is 1.27 rank units. The hybrid has the best mean rank (2.23) and F1 (0.733), ahead of HDDM-A (2.89, 0.672) and ADWIN (3.17, 0.611). The rank differences from HDDM-A (0.66) and ADWIN (0.94) are below the critical difference, so the hybrid is \emph{not} statistically distinguishable from these two. Differences to HDDM-W, DDM, EDDM and all ablations exceed it.
+\textbf{Detector benchmark, fixed setting.} Table~\ref{tab:overall} and Fig.~\ref{fig:bench} give the results. The Friedman test rejects equal F1 ($\chi^2=586.6$, $p<10^{-100}$; CD 1.76 for $k=12$, which includes the one-sided variant; it gives identical results on these streams because they contain only error increases). The hybrid has the best F1 (0.733) and rank (3.23), ahead of HDDM-A (0.672) and ADWIN (0.611). The Wilcoxon tests find it significantly better than HDDM-A ($p=0.042$) and ADWIN ($p=0.0002$) but not than HDDM-A+R500 ($p=0.22$): of the 0.061 F1 gain over HDDM-A, 0.008 comes from the refractory period alone. The fusion's real effect is higher recall (0.759 vs 0.689) at a lower false-alarm rate. On the unseen seeds 2000--2029 the ordering repeats (hybrid 0.786, HDDM-A+R500 0.734, HDDM-A 0.723, ADWIN 0.641), with the same significance pattern ($p=0.021$ vs HDDM-A, $0.22$ vs HDDM-A+R500).
 
 \begin{table}[t]
-\caption{Overall detector results (90 streams). FA = false alarms per 1\,000 samples; delay in samples; time in $\mu$s per sample; mem = peak kB.}
+\caption{Detector results, fixed setting (90 streams, seeds 0--29). FA = false alarms per 1\,000 samples; delay in samples (over detected drifts / penalised); time in $\mu$s per sample; mem = peak kB; rank = Friedman mean rank on F1.}
 \label{tab:overall}
-\centering\footnotesize\setlength{\tabcolsep}{3pt}
-\begin{tabular}{@{}lrrrrrr@{}}
+\centering\footnotesize\setlength{\tabcolsep}{2.5pt}
+\begin{tabular}{@{}lrrrrrrr@{}}
 \toprule
-Detector & F1 & Delay & FA & $\mu$s & kB & Rank\\
+Detector & F1 & FA & Delay & Pen. & $\mu$s & kB & Rank\\
 \midrule
-Hybrid OR(A,ADWIN) & 0.733 & 445 & 0.097 & 7.4 & 4.3 & 2.23\\
-HDDM-A & 0.672 & 469 & 0.110 & 6.5 & 5.1 & 2.89\\
-ADWIN & 0.611 & 488 & 0.117 & 0.4 & 0.8 & 3.17\\
-HDDM-W & 0.464 & 317 & 0.357 & 4.9 & 6.1 & 4.68\\
-DDM & 0.418 & 451 & 0.278 & 0.8 & 0.9 & 5.16\\
-AND(HDDM-W,EDDM) & 0.417 & 346 & 0.390 & 6.1 & 5.8 & 5.27\\
-AND(HDDM-W,ADWIN) & 0.370 & 536 & 0.080 & 5.9 & 5.5 & 5.98\\
-OR(HDDM-W,EDDM) & 0.223 & 182 & 2.087 & 6.1 & 6.7 & 7.27\\
-EDDM & 0.134 & 180 & 3.784 & 0.6 & 3.2 & 8.35\\
+Hybrid OR(A,ADWIN) & 0.733 & 0.097 & 445 & 482 & 3.1 & 4.4 & 3.23\\
+HDDM-A+R500 & 0.680 & 0.102 & 469 & 507 & 2.8 & 4.0 & 3.91\\
+HDDM-A & 0.672 & 0.110 & 469 & 507 & 2.7 & 5.2 & 4.12\\
+ADWIN & 0.611 & 0.117 & 488 & 534 & 0.2 & 0.7 & 4.56\\
+HDDM-W & 0.464 & 0.357 & 317 & 425 & 2.1 & 4.4 & 6.64\\
+DDM & 0.418 & 0.278 & 451 & 522 & 0.4 & 0.8 & 7.21\\
+AND(HDDM-W,EDDM) & 0.417 & 0.390 & 346 & 458 & 2.5 & 4.7 & 7.31\\
+AND(HDDM-W,ADWIN) & 0.370 & 0.080 & 536 & 595 & 2.4 & 4.5 & 8.17\\
+OR(ADWIN,EDDM) & 0.347 & 0.941 & 276 & 303 & 0.6 & 1.4 & 8.30\\
+OR(HDDM-W,EDDM) & 0.223 & 2.087 & 182 & 191 & 2.5 & 4.9 & 10.11\\
+EDDM & 0.134 & 3.784 & 180 & 206 & 0.3 & 1.4 & 11.23\\
 \bottomrule
 \end{tabular}
 \end{table}
 
 \begin{figure*}[t]
 \centering\includegraphics[width=0.95\textwidth]{figs/bench.pdf}
-\caption{Detection F1 and mean detection delay by drift type for the single detectors and the proposed hybrid.}
+\caption{Detection F1 and mean detection delay by drift type, fixed setting.}
 \label{fig:bench}
 \end{figure*}
 
-Per drift type (Table~\ref{tab:kind}), the hybrid's advantage over HDDM-A is largest for abrupt drift (F1 0.613 vs.\ 0.505) with essentially unchanged delay (193 vs.\ 188), and smaller for incremental (0.767 vs.\ 0.719) and gradual drift (0.819 vs.\ 0.792). Delays for gradual and incremental drift are several hundred samples for every detector except EDDM, which reacts fastest (76--276 samples) but at a cost of 3.4--4.1 false alarms per 1\,000 samples and F1 between 0.12 and 0.15.
+Per drift type (Table~\ref{tab:kind}), the hybrid's advantage over HDDM-A is largest for abrupt drift (F1 0.613 vs 0.505). EDDM reacts fastest (77--276 samples) but raises 3.4--4.1 false alarms per 1\,000 samples. On penalised delay the order is roughly the reverse of F1: EDDM-based detectors are fastest, then HDDM-W, then the hybrid, which is faster than HDDM-A, DDM and ADWIN ($p<0.001$ each).
 
 \begin{table}[t]
-\caption{F1 / mean delay (samples) by drift type.}
+\caption{F1 / mean delay (samples) by drift type, fixed setting.}
 \label{tab:kind}
 \centering\small
 \begin{tabular}{@{}lccc@{}}
@@ -137,11 +138,31 @@ Hybrid & 0.613 / 193 & 0.819 / 583 & 0.767 / 551\\
 \end{tabular}
 \end{table}
 
-
-\textbf{Tuning and confirmation.} Table~\ref{tab:sweep} shows the refractory sweep on seeds 1000--1019: F1 rises steadily with $R$ (0.634 at 100 to 0.775 at 800) while the delay stays near 424 samples, so $R=500$ is not the optimum of the range and we did not select it from this sweep. Table~\ref{tab:conf} repeats the full benchmark on seeds 2000--2029, which were never used for any design decision. The ordering is the same: the hybrid is first (F1 0.786, rank 2.14), HDDM-A second (0.723, 2.73), ADWIN third (0.641, 3.27), and the hybrid--HDDM-A rank gap (0.59) is again below the critical difference of 1.27 (Friedman $\chi^2=426.1$).
+\textbf{Varied setting.} Over 300 streams with varied settings (Table~\ref{tab:varied}) all F1 values fall, mainly because small drifts (amplitude 0.05) are hard for every detector (F1 $\le$0.30). The hybrid is still first (0.591, rank 4.30) but ADWIN is now second (0.550, rank 4.79) and HDDM-A drops to 0.483. The hybrid is significantly better than HDDM-A and every other detector ($p<10^{-4}$) except ADWIN ($p=0.28$; rank gap 0.49 below the CD of 0.96). Its penalised delay (524) is lower than ADWIN's (557) and HDDM-A's (582).
 
 \begin{table}[t]
-\caption{Refractory-period sweep of the hybrid on held-out seeds 1000--1019 (60 streams).}
+\caption{Varied setting (300 streams): F1 overall and by drift amplitude, penalised delay, Friedman rank on F1 (CD 0.96).}
+\label{tab:varied}
+\centering\footnotesize\setlength{\tabcolsep}{3pt}
+\begin{tabular}{@{}lrrrrrr@{}}
+\toprule
+Detector & F1 & 0.05 & 0.10 & 0.15 & Pen. & Rank\\
+\midrule
+Hybrid OR(A,ADWIN) & 0.591 & 0.234 & 0.617 & 0.934 & 524 & 4.30\\
+ADWIN & 0.550 & 0.171 & 0.601 & 0.880 & 557 & 4.79\\
+HDDM-A & 0.483 & 0.188 & 0.433 & 0.862 & 582 & 5.53\\
+DDM & 0.323 & 0.159 & 0.362 & 0.442 & 582 & 7.13\\
+OR(ADWIN,EDDM) & 0.279 & 0.292 & 0.254 & 0.300 & 342 & 6.29\\
+HDDM-W & 0.255 & 0.115 & 0.269 & 0.383 & 584 & 7.42\\
+EDDM & 0.132 & 0.166 & 0.117 & 0.119 & 276 & 8.59\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textbf{Refractory sweep.} Table~\ref{tab:sweep} shows the sweep on seeds 1000--1019: F1 rises steadily with $R$ while delay stays near 424 samples, so $R=500$ is not the optimum of the range and was not selected from this sweep.
+
+\begin{table}[t]
+\caption{Refractory-period sweep of the hybrid on seeds 1000--1019 (60 streams, fixed setting).}
 \label{tab:sweep}
 \centering\small
 \begin{tabular}{@{}rccc@{}}
@@ -157,76 +178,60 @@ $R$ & F1 & Delay & FA / 1\,000\\
 \end{tabular}
 \end{table}
 
+\textbf{Negative results.} Every fusion involving EDDM inherited its false-alarm rate: OR(HDDM-W,EDDM), the proposal's pairing, reached F1 0.223 and Paper 2's OR(ADWIN,EDDM) 0.347, both below ADWIN alone. Confirmation (AND) fusion lowered recall (0.31 for HDDM-W/ADWIN) and lengthened delay while barely reducing false alarms.
+
+\textbf{Downstream adaptation.} Table~\ref{tab:down} and Fig.~\ref{fig:down} summarize the prequential study. On the simulated stream a static LightGBM falls to 0.60 accuracy, and every drift-triggered variant recovers to 0.82--0.84 (hybrid $0.834\pm0.021$); the online Hoeffding Adaptive Tree is the most accurate (0.848). The hybrid detects the true drifts well (detection F1 0.96, delay 207), close to ADWIN (0.99, 221) and HDDM-A (0.94, 246), while EDDM causes 47 alarms and 26 retrains for three drifts and DDM 9 alarms. On the injected-drift IoTID20 and CICIDS2017 streams retraining again helps (CICIDS2017 attack F1 0.64 static vs 0.91--0.93 retrained), but detection F1 is low for all detectors (0.05--0.39), because the error rises only to a few percent. On these streams HDDM-A rarely fires, so the hybrid behaves exactly like ADWIN. In natural order IoTID20 is essentially stationary: the static model reaches 0.995, the HDDM-A, ADWIN, EDDM and hybrid triggers correctly stay silent, and DDM's 15 false alarms cost accuracy. CICIDS2017 in natural order drifts strongly: the static model's attack F1 collapses to 0.016, retraining gives 0.73--0.89 (DDM best, with 40 alarms), and River ARF reaches 0.962.
+
 \begin{table}[t]
-\caption{Confirmatory benchmark on unseen seeds 2000--2029 (90 streams).}
-\label{tab:conf}
-\centering\footnotesize\setlength{\tabcolsep}{3pt}
+\caption{Downstream results, mean of 10 seeds (natural order: one run). Sim = simulated IIoT accuracy; IoT, CIC = IoTID20, CICIDS2017 with injected drift (accuracy / attack F1); CIC-nat = CICIDS2017 natural order (attack F1).}
+\label{tab:down}
+\centering\footnotesize\setlength{\tabcolsep}{2.5pt}
 \begin{tabular}{@{}lrrrr@{}}
 \toprule
-Detector & F1 & Delay & FA & Rank\\
+Strategy & Sim & IoT & CIC & CIC-nat\\
 \midrule
-Hybrid OR(HDDM-A,ADWIN) & 0.786 & 449 & 0.081 & 2.14\\
-HDDM-A & 0.723 & 464 & 0.102 & 2.73\\
-ADWIN & 0.641 & 480 & 0.108 & 3.27\\
-DDM & 0.480 & 448 & 0.248 & 4.79\\
-HDDM-W & 0.456 & 301 & 0.353 & 4.83\\
-AND(HDDM-W,EDDM) & 0.417 & 358 & 0.373 & 5.42\\
-AND(HDDM-W,ADWIN) & 0.332 & 521 & 0.088 & 6.24\\
-OR(HDDM-W,EDDM) & 0.235 & 212 & 1.944 & 7.20\\
-EDDM & 0.147 & 226 & 3.416 & 8.38\\
-\bottomrule
-\end{tabular}
-\end{table}
-
-\textbf{Negative results.} Confirmation (AND) fusion lowered F1 for both pairings tested (0.370 and 0.417), because requiring agreement between a fast and a slow detector drops recall (0.23--0.66) and lengthens delay while the false-alarm rate barely improves. Pairing HDDM-W with EDDM inherited EDDM's high false-alarm rate under an OR rule and was worse than either HDDM-W alone or the pairing with ADWIN.
-
-\textbf{Downstream adaptation.} Table~\ref{tab:down} and Fig.~\ref{fig:down} show prequential accuracy on the simulated IIoT stream (one stream, seed 0). A static LightGBM falls to 0.586 accuracy overall (0.497 after the first drift). Every drift-triggered variant recovers to between 0.81 and 0.86. The hybrid trigger has the best detection F1 (0.857, tied with HDDM-A) and a delay of 220 samples versus 268 for HDDM-A, but its overall accuracy (0.811) is lower than ADWIN's (0.863) and River's Hoeffding Adaptive Tree (0.874). EDDM triggers 37 alarms and 27 retrains for three true drifts. The online Hoeffding Adaptive Tree needs no external detector and was the most accurate strategy here.
-
-\begin{table}[t]
-\caption{Prequential results on the simulated IIoT stream. Acc = overall accuracy; Acc$_{1}$ = accuracy after first drift; ms = ms per sample.}
-\label{tab:down}
-\centering\small
-\begin{tabular}{@{}lrrrrrr@{}}
-\toprule
-Strategy & Acc & Acc$_1$ & Alarms & Retr. & F1$_d$ & ms\\
-\midrule
-Static LightGBM & 0.586 & 0.497 & 0 & 0 & -- & 0.03\\
-+ DDM & 0.830 & 0.811 & 9 & 6 & 0.50 & 0.04\\
-+ HDDM-A & 0.819 & 0.792 & 4 & 4 & 0.86 & 0.04\\
-+ ADWIN & 0.863 & 0.847 & 7 & 7 & 0.60 & 0.04\\
-+ EDDM & 0.830 & 0.810 & 37 & 27 & 0.15 & 0.07\\
-+ Hybrid (ours) & 0.811 & 0.781 & 4 & 4 & 0.86 & 0.05\\
-River ARF & 0.840 & 0.837 & -- & -- & -- & 0.73\\
-River HAT & 0.874 & 0.867 & -- & -- & -- & 0.15\\
+Static LightGBM & 0.603 & 0.947 / 0.972 & 0.895 / 0.644 & 0.016\\
++ DDM & 0.836 & 0.974 / 0.986 & 0.967 / 0.910 & 0.895\\
++ HDDM-A & 0.831 & 0.955 / 0.977 & 0.966 / 0.905 & 0.733\\
++ ADWIN & 0.825 & 0.971 / 0.985 & 0.969 / 0.916 & 0.738\\
++ EDDM & 0.840 & 0.974 / 0.986 & 0.974 / 0.931 & 0.786\\
++ Hybrid (ours) & 0.834 & 0.971 / 0.985 & 0.969 / 0.916 & 0.756\\
+River ARF & 0.816 & 0.971 / 0.985 & 0.962 / 0.892 & 0.962\\
+River HAT & 0.848 & 0.947 / 0.973 & 0.877 / 0.576 & 0.879\\
 \bottomrule
 \end{tabular}
 \end{table}
 
 \begin{figure*}[t]
 \centering\includegraphics[width=0.95\textwidth]{figs/downstream.pdf}
-\caption{Rolling prequential accuracy (window 500). Dashed lines mark true drift onsets.}
+\caption{Rolling prequential accuracy (window 300, seed 0). Dashed lines mark drift onsets. On IoTID20 the ADWIN and hybrid curves coincide.}
 \label{fig:down}
 \end{figure*}
 
-\textbf{Live pipeline behaviour.} With the hybrid detector and a River Hoeffding Adaptive Tree replaced on each alarm, the in-process runner raised alarms at samples 5\,025, 10\,044 and 15\,519 (delays 25, 44 and 519 samples) plus seven other alarms (351, 2\,916, 4\,223, 8\,991, 10\,641, 17\,663 and 18\,207), i.e.\ every true drift was caught but with many extra alarms.
+\textbf{Live pipeline.} We streamed the 20\,000-record simulated stream through Kafka into the online scorer and InfluxDB (Fig.~\ref{fig:live}), with all points visible in Grafana. At an offered 1\,000 records/s the consumer processed 805 records/s with a median end-to-end latency of 3.1\,ms (95th percentile 20\,ms) for the hybrid and 2.2\,ms (7.4\,ms) for the one-sided variant. With the producer uncapped, the consumer's capacity was 824 records/s, and beyond it records queue in Kafka (median latency 12\,s). The limit is the single-threaded Python consumer with one synchronous InfluxDB write per record, not Kafka. The alarms were identical to an in-process run. The two-sided hybrid raised alarms at 2\,503, 5\,017, 10\,011, 14\,247 and 18\,803 (F1 0.50, three false alarms), the one-sided hybrid at 2\,503, 5\,017, 10\,011 and 15\,335 (F1 0.86, one false alarm, the same as HDDM-A alone). The alarm at 2\,503, raised by every detector, follows a real rise in the tree's error with no change in the data.
+
+\begin{figure}[t]
+\centering\includegraphics[width=\columnwidth]{figs/live.pdf}
+\caption{Live Kafka run: rolling error (blue), alarms (red) and true drift onsets (dashed; the first two coincide with alarms).}
+\label{fig:live}
+\end{figure}
 
 \section{Discussion and Inferences}
-\textbf{What the results say.} Detectors that watch a running mean (HDDM-A, ADWIN) were the most reliable on our synthetic streams; sensitive detectors (EDDM, HDDM-W) reacted faster but produced many more false alarms, so under an F1 that penalizes every extra alarm they rank lower. The OR-fusion of two mean-based detectors with different mechanisms increased recall (0.76 versus 0.69 for HDDM-A alone, from held-out tuning) while the refractory period kept false alarms at 0.097 per 1\,000 samples. The hybrid's gain is modest and, under the Nemenyi test, not significant against HDDM-A or ADWIN. It costs about one microsecond more per sample than HDDM-A, negligible next to any Kafka hop.
+\textbf{Answer to the research question.} No single detector wins on every axis. Mean-based detectors (HDDM-A, ADWIN) give the best accuracy--false-alarm balance; EDDM and HDDM-W react fastest but at many times the false-alarm rate. Fusing HDDM-A and ADWIN with an OR rule and a refractory period gives the best F1 in every synthetic setting and a lower penalised delay than either component, for about 3\,$\mu$s and 4\,kB per stream, negligible next to a Kafka hop. The gain is robust against HDDM-A but not against ADWIN when stream settings vary, so the claim we can support is ``at least as good as the best single detector, and more robust across settings than either component''.
 
-\textbf{Relation to base paper 1.} Sakurai et al.\ report EDDM as the most accurate detector overall and HDDM-W as the best trade-off. Our results differ: EDDM has the highest recall and shortest delay but the lowest F1. We attribute this mainly to our scoring rule (all extra alarms are false alarms), our one-sided error-rate increases, and different stream parameters; we did not tune any baseline detector. We do not claim to have reproduced their ranking.
+\textbf{Relation to base paper 1.} Sakurai et al.\ report EDDM as the most accurate detector and HDDM-W as the best trade-off. We reproduce the qualitative finding that no detector dominates, and HDDM-W does have lower delay than DDM and HDDM-A, but EDDM has the lowest F1 in both of our settings. We attribute this to our scoring rule (every extra alarm is a false alarm), the use of untuned defaults, and our own generator; we do not claim to reproduce their ranking.
 
-\textbf{Downstream.} Drift detection is worth doing: static LightGBM lost about 40 accuracy points. However, better detection F1 did not translate into better accuracy in our single run, since accuracy also depends on when retraining happens and how much post-drift data is available (250-sample wait, 500-sample window), and on false-alarm retrains that happen to be harmless. An online tree with built-in drift handling outperformed all retrain-on-alarm variants, so a detector-plus-retrain design must be justified by other benefits (model choice, cost, interpretability) rather than accuracy alone.
+\textbf{Downstream.} Drift-triggered retraining is clearly worth doing when drift is real (simulated stream, CICIDS2017), and well-behaved detectors cost nothing when it is not (IoTID20). However, better detection F1 did not translate into better accuracy. On streams with frequent class-prior shifts, as in CICIDS2017, a ``noisy'' trigger such as DDM retrains more often and benefits, while online learners with built-in adaptation (River ARF, HAT) are competitive or better. Detection quality and adaptation quality should therefore be evaluated separately.
 
-\textbf{Threats to validity.} (1) All detector results use synthetic Bernoulli error streams; real classifier errors are autocorrelated. (2) The fusion pair and $R$ were chosen on the evaluation seeds 0--29, and only the hybrid was tuned while the baselines run at River defaults, which favors the hybrid; the unseen-seed run (Table~\ref{tab:conf}) shows the same ordering but does not remove the untuned-baseline advantage. (3) The 300-sample margin in the tolerance window and the choice of drift amplitude are ours. (4) Mean delay is computed over detected drifts only, so detectors that miss drifts have optimistic delay. (5) The downstream study uses one stream and one seed. (6) IoTID20 and CICIDS2017 were not used, so no claim is made about real network traffic; real datasets carry no drift labels and would need injected drift. (7) ADWIN is two-sided and can fire when a freshly reset learner \emph{improves}, which likely explains some of the extra alarms in the live run. (8) The Spark branch is not on the scoring path, and end-to-end Kafka-to-Grafana latency and throughput were not measured.
+\textbf{Deployment considerations.} A detector fed by a learner that has just been reset sees a falling error rate, and two-sided tests such as ADWIN treat improvement as change. The warm-up guard and one-sided ADWIN together removed this class of alarm in the live run. In a plant, an alarm should trigger review or a controlled retrain rather than an unattended model swap, so alarm precision matters more than delay.
 
-
-\textbf{Deployment considerations.} The detectors add microseconds per sample and a few kilobytes of state (Table~\ref{tab:overall}), so on the detector side the cost is dominated by the classifier and by transport, not by drift detection. Two practical points follow from the live run. First, a detector fed by a learner that has just been reset sees a falling error rate, and two-sided tests such as ADWIN can treat improvement as change; guarding the detector for a warm-up period or using a one-sided variant would remove this class of alarms. Second, in a plant an alarm should trigger a review or a controlled retrain rather than an unattended model swap, so the alarm precision reported here matters more than the delay.
+\textbf{Threats to validity.} (1) Detector benchmarks use synthetic Bernoulli error streams; real classifier errors are autocorrelated. (2) The hybrid was designed on seeds 0--29 and only it was tuned, while baselines use River defaults; the unseen-seed and varied runs reduce but do not remove this advantage. (3) The 300-sample margin and the drift amplitudes are our choices. (4) Drift in IoTID20 and CICIDS2017 is injected by feature remapping, which is one kind of real drift; natural-order runs have no ground truth. (5) We use the published dataset samples, not the full datasets. (6) The live run uses one machine, one consumer and the simulated stream; the Spark branch was not run.
 
 \section{Reproducibility}
-The repository provides the commands \texttt{python -m drift.benchmark --seeds 30} (exploratory seeds), \texttt{python -m drift.benchmark --seeds 30 --start 2000 --out results\_heldout} (confirmatory seeds), \texttt{python -m drift.tune\_hybrid} (refractory sweep), \texttt{python -m drift.adaptive} (downstream study) and \texttt{python -m streaming.run\_local} (in-process pipeline), plus \texttt{docker compose up -d}, \texttt{python -m streaming.consumer} and \texttt{python -m streaming.producer} for the Kafka--InfluxDB--Grafana path. All random seeds are fixed. Wall-clock timings depend on the machine and vary between runs.
+\texttt{python -m drift.benchmark} (fixed, seeds 0--29), \texttt{-{}-start 2000 -{}-out results\_heldout} (unseen seeds), \texttt{-{}-varied -{}-seeds 100 -{}-start 3000 -{}-out results\_varied}, \texttt{python -m drift.tune\_hybrid}, \texttt{python -m drift.adaptive} (downstream, all datasets), \texttt{python -m streaming.run\_local}, and \texttt{docker compose up -d}, \texttt{python -m streaming.consumer -{}-max 20000}, \texttt{python -m streaming.producer -{}-rate 1000} for the live path. Unit tests: \texttt{pytest tests}. All seeds are fixed; timings depend on the machine.
 
 \section{Conclusion and Future Work}
-We built a streaming drift-monitoring pipeline and compared error-rate and window-based detectors on controlled synthetic drift. A hybrid of HDDM-A and ADWIN with a refractory period gave the best mean F1 and rank, though not significantly better than its components, while confirmation-based hybrids and EDDM-based pairings failed. Drift-triggered retraining recovers most of the accuracy a static model loses. Future work: evaluate on IoTID20/CICIDS2017 with injected drift, tune all detectors on equal footing, use one-sided ADWIN or a warm-up guard after learner resets, route Spark window features into the detector, and measure end-to-end latency, throughput and drift-recovery time on the Kafka pipeline.
+We benchmarked five drift detectors and six fusion variants on 480 synthetic streams, studied drift-triggered retraining on simulated and real IIoT data, and ran a live Kafka monitoring pipeline. An OR-fusion of HDDM-A and ADWIN with a refractory period gave the best detection F1 in every setting, significantly better than HDDM-A and tied with ADWIN when settings vary, while EDDM-based and confirmation fusions failed. Retraining recovered most of the accuracy lost to drift, but detector quality alone did not decide downstream accuracy. Future work: tune all detectors on equal footing, evaluate the full datasets and other kinds of injected drift, batch InfluxDB writes and partition the topic to scale the consumer, and route Spark window features into the detector.
 
 \begin{thebibliography}{99}
 \bibitem{gama2014survey} J. Gama, I. \v{Z}liobait\.{e}, A. Bifet, M. Pechenizkiy, and A. Bouchachia, ``A survey on concept drift adaptation,'' \emph{ACM Comput. Surv.}, vol. 46, no. 4, pp. 1--37, 2014.

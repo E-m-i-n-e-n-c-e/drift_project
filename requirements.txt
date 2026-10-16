@@ -1,9 +1,12 @@
-river>=0.21
-numpy
-pandas
-scipy
-scikit-learn
-lightgbm
-matplotlib
+# tested with Python 3.14.5 on macOS (LightGBM on macOS needs: brew install libomp)
+river==0.26.1
+numpy==2.5.4
+pandas==3.0.6
+scipy==1.18.1
+scikit-learn==1.9.1
+lightgbm==4.7.0
+matplotlib==3.11.2
+pytest
+# live pipeline only
 kafka-python
 influxdb-client
