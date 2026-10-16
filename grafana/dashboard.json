@@ -1,0 +1,97 @@
+{
+ "title": "Concept Drift Monitor (IIoT stream)",
+ "uid": "drift-monitor",
+ "schemaVersion": 39,
+ "refresh": "5s",
+ "time": {
+  "from": "now-15m",
+  "to": "now"
+ },
+ "panels": [
+  {
+   "id": 1,
+   "title": "Rolling error rate",
+   "type": "timeseries",
+   "gridPos": {
+    "x": 0,
+    "y": 0,
+    "w": 12,
+    "h": 8
+   },
+   "datasource": {
+    "type": "influxdb",
+    "uid": "influx-drift"
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "query": "from(bucket:\"drift\") |> range(start: -15m) |> filter(fn:(r)=> r._measurement==\"drift_stream\" and r._field==\"rolling_err\") |> aggregateWindow(every: 5s, fn: mean, createEmpty:false)"
+    }
+   ]
+  },
+  {
+   "id": 2,
+   "title": "Drift alarms (detector)",
+   "type": "timeseries",
+   "gridPos": {
+    "x": 12,
+    "y": 0,
+    "w": 12,
+    "h": 8
+   },
+   "datasource": {
+    "type": "influxdb",
+    "uid": "influx-drift"
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "query": "from(bucket:\"drift\") |> range(start: -15m) |> filter(fn:(r)=> r._measurement==\"drift_stream\" and r._field==\"alarm\") |> aggregateWindow(every: 5s, fn: sum, createEmpty:false)"
+    }
+   ]
+  },
+  {
+   "id": 3,
+   "title": "Ground-truth drift onsets",
+   "type": "timeseries",
+   "gridPos": {
+    "x": 0,
+    "y": 8,
+    "w": 12,
+    "h": 8
+   },
+   "datasource": {
+    "type": "influxdb",
+    "uid": "influx-drift"
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "query": "from(bucket:\"drift\") |> range(start: -15m) |> filter(fn:(r)=> r._measurement==\"drift_stream\" and r._field==\"true_drift\") |> aggregateWindow(every: 5s, fn: sum, createEmpty:false)"
+    }
+   ]
+  },
+  {
+   "id": 4,
+   "title": "Alarms in window",
+   "type": "stat",
+   "options": {"reduceOptions": {"calcs": ["sum"], "values": false}},
+   "gridPos": {
+    "x": 12,
+    "y": 8,
+    "w": 12,
+    "h": 8
+   },
+   "datasource": {
+    "type": "influxdb",
+    "uid": "influx-drift"
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "query": "from(bucket:\"drift\") |> range(start: -15m) |> filter(fn:(r)=> r._measurement==\"drift_stream\" and r._field==\"alarm\") |> aggregateWindow(every: 5s, fn: sum, createEmpty:false)"
+    }
+   ]
+  }
+ ]
+}

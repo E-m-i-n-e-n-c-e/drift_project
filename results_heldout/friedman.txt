@@ -1,0 +1,12 @@
+Friedman chi2=426.07, p=4.94e-87, k=9, N=90
+Nemenyi CD(0.05)=1.266
+detector
+Hybrid-OR(HDDM-A,ADWIN)     2.14
+HDDM-A                      2.73
+ADWIN                       3.27
+DDM                         4.79
+HDDM-W                      4.83
+Hybrid-AND(HDDM-W,EDDM)     5.42
+Hybrid-AND(HDDM-W,ADWIN)    6.24
+Hybrid-OR(HDDM-W,EDDM)      7.20
+EDDM                        8.38

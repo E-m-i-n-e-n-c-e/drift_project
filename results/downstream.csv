@@ -1,0 +1,9 @@
+strategy,accuracy,acc_after_1st_drift,alarms,retrains,drift_F1,drift_delay,ms_per_sample
+Static LightGBM,0.5863,0.4967,0,0,,,0.0302
+LightGBM + DDM,0.8301,0.8113,9,6,0.5,616.3333,0.0455
+LightGBM + HDDM-A,0.8194,0.792,4,4,0.8571,268.0,0.0539
+LightGBM + ADWIN,0.8628,0.8469,7,7,0.6,279.0,0.0429
+LightGBM + EDDM,0.83,0.8101,37,27,0.15,214.3333,0.0721
+"LightGBM + Hybrid-OR(HDDM-A,ADWIN)",0.8107,0.781,4,4,0.8571,219.6667,0.0482
+River ARF (online),0.8326,0.8285,0,0,,,0.5868
+River HAT (online),0.8741,0.8668,0,0,,,0.107

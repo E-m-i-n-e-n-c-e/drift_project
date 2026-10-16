@@ -1,0 +1,9 @@
+river>=0.21
+numpy
+pandas
+scipy
+scikit-learn
+lightgbm
+matplotlib
+kafka-python
+influxdb-client

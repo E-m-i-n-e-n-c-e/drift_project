@@ -1,0 +1,9 @@
+apiVersion: 1
+datasources:
+  - name: InfluxDB
+    uid: influx-drift
+    type: influxdb
+    access: proxy
+    url: http://influxdb:8086
+    jsonData: {version: Flux, organization: drift-org, defaultBucket: drift}
+    secureJsonData: {token: drift-token}
